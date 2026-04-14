@@ -31,24 +31,23 @@ on:
         required: true
         default: "docker://ghcr.io/agentstation/neovex-machine-os:v0.0.0-dev"
         type: string
-      publish_stable_alias:
-        description: "Also publish the stable alias for this machine artifact"
+  workflow_call:
+    inputs:
+      neovex_version:
+        description: "Neovex release tag to download (e.g. v0.1.0)"
         required: true
-        default: false
-        type: boolean
-      publish_latest_alias:
-        description: "Also publish the latest alias for this machine artifact"
+        type: string
+      publish:
+        description: "Push the packaged raw-disk OCI artifact to GHCR"
         required: true
-        default: false
         type: boolean
-      additional_reference:
-        description: "Optional additional destination image reference"
-        required: false
-        default: ""
+      image_reference:
+        description: "Immutable destination image reference for the packaged machine artifact"
+        required: true
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.neovex_version || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -60,8 +59,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
+      - name: Check out machine-os repository
         uses: actions/checkout@v6
+        with:
+          repository: agentstation/neovex-machine-os
 
       - name: Verify helper syntax and help entrypoints
         run: |
@@ -86,7 +87,10 @@ jobs:
   build-arm64:
     name: Build machine-os (linux arm64)
     needs: verify-contract
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      github.event_name == 'workflow_call'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -95,8 +99,10 @@ jobs:
       attestations: write
 
     steps:
-      - name: Check out repository
+      - name: Check out machine-os repository
         uses: actions/checkout@v6
+        with:
+          repository: agentstation/neovex-machine-os
 
       - name: Initialize build directories
         run: |
@@ -113,10 +119,10 @@ jobs:
       - name: Determine neovex version
         id: neovex-version
         run: |
-          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+          if [[ -n "${{ inputs.neovex_version }}" ]]; then
             echo "tag=${{ inputs.neovex_version }}" >> "${GITHUB_OUTPUT}"
           else
-            # Use the latest neovex release
+            # Tag push on this repo — use the latest neovex release
             tag="$(gh api repos/agentstation/neovex/releases/latest --jq '.tag_name')"
             echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           fi
@@ -161,44 +167,33 @@ jobs:
             fi
           done
 
-      - name: Validate release-reference policy
+      - name: Resolve image reference
         id: release-policy
         run: |
-          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+          if [[ -n "${{ inputs.image_reference }}" ]]; then
             image_reference="${{ inputs.image_reference }}"
-            publish="${{ inputs.publish }}"
-            publish_stable_alias="${{ inputs.publish_stable_alias }}"
-            publish_latest_alias="${{ inputs.publish_latest_alias }}"
           else
             tag_name="${GITHUB_REF_NAME}"
             image_reference="docker://ghcr.io/agentstation/neovex-machine-os:${tag_name}"
-            publish='true'
-            publish_stable_alias='true'
-            publish_latest_alias='false'
           fi
 
-          if [[ ! "${image_reference}" =~ ^docker://ghcr\.io/agentstation/neovex-machine-os: ]]; then
-            echo "image_reference must target docker://ghcr.io/agentstation/neovex-machine-os:<tag>" >&2
-            exit 1
+          publish="${{ inputs.publish }}"
+          if [[ -z "${publish}" || "${publish}" == "false" ]]; then
+            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+              publish='true'
+            else
+              publish='false'
+            fi
           fi
-          if [[ "${publish}" == 'true' && "${image_reference}" =~ :dev$ ]]; then
-            echo "refusing to publish the dev tag; choose an immutable version tag such as v0.1.0" >&2
-            exit 1
-          fi
+
           if [[ "${publish}" == 'true' && ! "${image_reference}" =~ :v[0-9] ]]; then
             echo "publishes must use an immutable version tag such as v0.1.0" >&2
-            exit 1
-          fi
-          if [[ "${publish}" == 'true' && "${image_reference}" =~ :(stable|latest)$ ]]; then
-            echo "publishes must target an immutable version tag, not ${image_reference##*:}" >&2
             exit 1
           fi
 
           {
             echo "image_reference=${image_reference}"
             echo "publish=${publish}"
-            echo "publish_stable_alias=${publish_stable_alias}"
-            echo "publish_latest_alias=${publish_latest_alias}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Pull base images
@@ -237,22 +232,11 @@ jobs:
           NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}
           NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ github.token }}
         run: |
-          publish_args=(
-            --layout-dir "${LAYOUT_DIR}"
-            --build-output-dir "${BUILD_OUTPUT_DIR}"
-            --image-reference "${{ steps.release-policy.outputs.image_reference }}"
+          bash scripts/publish.sh \
+            --layout-dir "${LAYOUT_DIR}" \
+            --build-output-dir "${BUILD_OUTPUT_DIR}" \
+            --image-reference "${{ steps.release-policy.outputs.image_reference }}" \
             --release-dir "${RELEASE_DIR}"
-          )
-          if [[ "${{ steps.release-policy.outputs.publish_stable_alias }}" == 'true' ]]; then
-            publish_args+=(--additional-reference "docker://ghcr.io/agentstation/neovex-machine-os:stable")
-          fi
-          if [[ "${{ steps.release-policy.outputs.publish_latest_alias }}" == 'true' ]]; then
-            publish_args+=(--additional-reference "docker://ghcr.io/agentstation/neovex-machine-os:latest")
-          fi
-          if [[ -n "${{ inputs.additional_reference }}" ]]; then
-            publish_args+=(--additional-reference "${{ inputs.additional_reference }}")
-          fi
-          bash scripts/publish.sh "${publish_args[@]}"
 
       - name: Attest build provenance
         if: steps.release-policy.outputs.publish == 'true'
