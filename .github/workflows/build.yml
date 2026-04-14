@@ -1,0 +1,286 @@
+name: Build machine-os
+
+on:
+  pull_request:
+    paths:
+      - "images/**"
+      - "scripts/**"
+      - ".github/workflows/build.yml"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "images/**"
+      - "scripts/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+    inputs:
+      neovex_version:
+        description: "Neovex release tag to download (e.g. v0.1.0)"
+        required: true
+        type: string
+      publish:
+        description: "Push the packaged raw-disk OCI artifact to GHCR"
+        required: true
+        default: false
+        type: boolean
+      image_reference:
+        description: "Immutable destination image reference for the packaged machine artifact"
+        required: true
+        default: "docker://ghcr.io/agentstation/neovex-machine-os:v0.0.0-dev"
+        type: string
+      publish_stable_alias:
+        description: "Also publish the stable alias for this machine artifact"
+        required: true
+        default: false
+        type: boolean
+      publish_latest_alias:
+        description: "Also publish the latest alias for this machine artifact"
+        required: true
+        default: false
+        type: boolean
+      additional_reference:
+        description: "Optional additional destination image reference"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-contract:
+    name: Verify machine-os contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify helper syntax and help entrypoints
+        run: |
+          bash -n scripts/build.sh
+          bash -n scripts/package-oci.sh
+          bash -n scripts/publish.sh
+          bash -n scripts/verify-recipe.sh
+          bash -n scripts/verify-build-helper.sh
+          bash -n scripts/verify-oci-layout-helper.sh
+          bash -n scripts/verify-publish-helper.sh
+          bash scripts/build.sh --help
+          bash scripts/package-oci.sh --help
+          bash scripts/publish.sh --help
+
+      - name: Verify deterministic helper lanes
+        run: |
+          bash scripts/verify-recipe.sh
+          bash scripts/verify-build-helper.sh
+          bash scripts/verify-oci-layout-helper.sh
+          bash scripts/verify-publish-helper.sh
+
+  build-arm64:
+    name: Build machine-os (linux arm64)
+    needs: verify-contract
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Initialize build directories
+        run: |
+          {
+            echo "BUILD_OUTPUT_DIR=${RUNNER_TEMP}/neovex-machine-os"
+            echo "LAYOUT_DIR=${RUNNER_TEMP}/neovex-machine-os-layout"
+            echo "RELEASE_DIR=${RUNNER_TEMP}/neovex-machine-os-release"
+          } >> "${GITHUB_ENV}"
+          mkdir -p \
+            "${RUNNER_TEMP}/neovex-machine-os" \
+            "${RUNNER_TEMP}/neovex-machine-os-layout" \
+            "${RUNNER_TEMP}/neovex-machine-os-release"
+
+      - name: Determine neovex version
+        id: neovex-version
+        run: |
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+            echo "tag=${{ inputs.neovex_version }}" >> "${GITHUB_OUTPUT}"
+          else
+            # Use the latest neovex release
+            tag="$(gh api repos/agentstation/neovex/releases/latest --jq '.tag_name')"
+            echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download neovex binary
+        run: |
+          tag="${{ steps.neovex-version.outputs.tag }}"
+          curl -fsSL -o "${RUNNER_TEMP}/neovex.tar.gz" \
+            "https://github.com/agentstation/neovex/releases/download/${tag}/neovex_linux_arm64.tar.gz"
+          tar xzf "${RUNNER_TEMP}/neovex.tar.gz" -C "${RUNNER_TEMP}"
+          chmod +x "${RUNNER_TEMP}/neovex"
+          echo "neovex_binary=${RUNNER_TEMP}/neovex" >> "${GITHUB_ENV}"
+
+      - name: Verify build-host requirements
+        run: |
+          command -v sudo
+          command -v git
+          command -v podman
+          command -v gzip
+          command -v sha256sum
+          command -v skopeo
+          sudo -n true
+
+      - name: Restore container image cache
+        id: image-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/image-cache
+          key: base-image-arm64-${{ hashFiles('images/Containerfile', 'images/build-common.sh') }}
+          restore-keys: |
+            base-image-arm64-
+
+      - name: Load cached container images
+        run: |
+          cache_dir="${RUNNER_TEMP}/image-cache"
+          for archive in "${cache_dir}"/*.tar; do
+            if [[ -f "${archive}" ]]; then
+              echo "Loading $(basename "${archive}")..."
+              sudo podman load -i "${archive}"
+            fi
+          done
+
+      - name: Validate release-reference policy
+        id: release-policy
+        run: |
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+            image_reference="${{ inputs.image_reference }}"
+            publish="${{ inputs.publish }}"
+            publish_stable_alias="${{ inputs.publish_stable_alias }}"
+            publish_latest_alias="${{ inputs.publish_latest_alias }}"
+          else
+            tag_name="${GITHUB_REF_NAME}"
+            image_reference="docker://ghcr.io/agentstation/neovex-machine-os:${tag_name}"
+            publish='true'
+            publish_stable_alias='true'
+            publish_latest_alias='false'
+          fi
+
+          if [[ ! "${image_reference}" =~ ^docker://ghcr\.io/agentstation/neovex-machine-os: ]]; then
+            echo "image_reference must target docker://ghcr.io/agentstation/neovex-machine-os:<tag>" >&2
+            exit 1
+          fi
+          if [[ "${publish}" == 'true' && "${image_reference}" =~ :dev$ ]]; then
+            echo "refusing to publish the dev tag; choose an immutable version tag such as v0.1.0" >&2
+            exit 1
+          fi
+          if [[ "${publish}" == 'true' && ! "${image_reference}" =~ :v[0-9] ]]; then
+            echo "publishes must use an immutable version tag such as v0.1.0" >&2
+            exit 1
+          fi
+          if [[ "${publish}" == 'true' && "${image_reference}" =~ :(stable|latest)$ ]]; then
+            echo "publishes must target an immutable version tag, not ${image_reference##*:}" >&2
+            exit 1
+          fi
+
+          {
+            echo "image_reference=${image_reference}"
+            echo "publish=${publish}"
+            echo "publish_stable_alias=${publish_stable_alias}"
+            echo "publish_latest_alias=${publish_latest_alias}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Pull base images
+        run: |
+          sudo podman pull quay.io/fedora/fedora-bootc:42 &
+          sudo podman pull quay.io/centos-bootc/bootc-image-builder:latest &
+          wait
+
+      - name: Build guest image
+        run: |
+          sudo bash scripts/build.sh \
+            --neovex-binary "${neovex_binary}" \
+            --output-dir "${BUILD_OUTPUT_DIR}"
+          sudo chown -R "$(id -u):$(id -g)" \
+            "${BUILD_OUTPUT_DIR}"
+
+      - name: Save base image to cache
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          cache_dir="${RUNNER_TEMP}/image-cache"
+          mkdir -p "${cache_dir}"
+          sudo podman save -o "${cache_dir}/bootc-base.tar" quay.io/fedora/fedora-bootc:42
+          sudo chown -R "$(id -u):$(id -g)" "${cache_dir}"
+
+      - name: Package raw-disk OCI layout
+        run: |
+          bash scripts/package-oci.sh \
+            --build-output-dir "${BUILD_OUTPUT_DIR}" \
+            --image-reference "${{ steps.release-policy.outputs.image_reference }}" \
+            --layout-dir "${LAYOUT_DIR}" \
+            --arch arm64
+
+      - name: Publish packaged OCI artifact
+        if: steps.release-policy.outputs.publish == 'true'
+        env:
+          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}
+          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ github.token }}
+        run: |
+          publish_args=(
+            --layout-dir "${LAYOUT_DIR}"
+            --build-output-dir "${BUILD_OUTPUT_DIR}"
+            --image-reference "${{ steps.release-policy.outputs.image_reference }}"
+            --release-dir "${RELEASE_DIR}"
+          )
+          if [[ "${{ steps.release-policy.outputs.publish_stable_alias }}" == 'true' ]]; then
+            publish_args+=(--additional-reference "docker://ghcr.io/agentstation/neovex-machine-os:stable")
+          fi
+          if [[ "${{ steps.release-policy.outputs.publish_latest_alias }}" == 'true' ]]; then
+            publish_args+=(--additional-reference "docker://ghcr.io/agentstation/neovex-machine-os:latest")
+          fi
+          if [[ -n "${{ inputs.additional_reference }}" ]]; then
+            publish_args+=(--additional-reference "${{ inputs.additional_reference }}")
+          fi
+          bash scripts/publish.sh "${publish_args[@]}"
+
+      - name: Attest build provenance
+        if: steps.release-policy.outputs.publish == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.ociarchive
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.raw.gz
+            ${{ env.RELEASE_DIR }}/checksums.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: neovex-machine-os-arm64
+          if-no-files-found: error
+          path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/summary.txt
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.ociarchive
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.raw.gz
+            ${{ env.LAYOUT_DIR }}/summary.txt
+            ${{ env.LAYOUT_DIR }}/index.json
+
+      - name: Upload publish bundle
+        if: steps.release-policy.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: neovex-machine-os-arm64-publish
+          if-no-files-found: error
+          path: |
+            ${{ env.RELEASE_DIR }}/publish-summary.txt
+            ${{ env.RELEASE_DIR }}/checksums.txt
