@@ -1,0 +1,216 @@
+name: Publish machine-os staged bundle
+run-name: >-
+  Publish machine-os${{
+    inputs.release_tag != '' && format(' ({0})', inputs.release_tag)
+    || ''
+  }}
+
+on:
+  workflow_call:
+    inputs:
+      neovex_version:
+        description: "Neovex release tag recorded in the machine-os release notes"
+        required: true
+        type: string
+      release_tag:
+        description: "Machine-os release tag to create or update (e.g. vX.Y.Z)"
+        required: false
+        default: ""
+        type: string
+      stage_artifact_name:
+        description: "Artifact name produced by the staging build lane"
+        required: true
+        type: string
+      image_reference:
+        description: "Immutable destination image reference for the packaged machine artifact"
+        required: true
+        type: string
+      create_release:
+        description: "Create or update a GitHub release in the machine-os repo"
+        required: false
+        default: false
+        type: boolean
+      release_app_id:
+        description: "GitHub App ID used to mint a cross-repo release token for publish/release lanes"
+        required: false
+        default: ""
+        type: string
+    secrets:
+      MACHINE_OS_RELEASE_APP_PRIVATE_KEY:
+        required: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.release_tag || inputs.neovex_version || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish-arm64:
+    name: Publish machine-os (linux arm64)
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out machine-os repository
+        uses: actions/checkout@v6
+        with:
+          repository: agentstation/neovex-machine-os
+
+      - name: Initialize publish directories
+        run: |
+          {
+            echo "BUILD_OUTPUT_DIR=${RUNNER_TEMP}/neovex-machine-os"
+            echo "LAYOUT_DIR=${RUNNER_TEMP}/neovex-machine-os-layout"
+            echo "RELEASE_DIR=${RUNNER_TEMP}/neovex-machine-os-release"
+          } >> "${GITHUB_ENV}"
+          mkdir -p \
+            "${RUNNER_TEMP}/neovex-machine-os" \
+            "${RUNNER_TEMP}/neovex-machine-os-layout" \
+            "${RUNNER_TEMP}/neovex-machine-os-release"
+
+      - name: Resolve release metadata
+        id: release-metadata
+        run: |
+          release_tag="${{ inputs.release_tag }}"
+          if [[ -z "${release_tag}" ]]; then
+            release_tag="${{ inputs.neovex_version }}"
+          fi
+
+          create_release="${{ inputs.create_release }}"
+          if [[ -z "${create_release}" || "${create_release}" == "false" ]]; then
+            create_release='false'
+          fi
+
+          {
+            echo "release_tag=${release_tag}"
+            echo "create_release=${create_release}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Verify cross-repo release auth
+        env:
+          MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${{ inputs.release_app_id }}" ]]; then
+            echo "release_app_id must be passed to the reusable machine-os publish workflow." >&2
+            exit 1
+          fi
+          if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be passed to the reusable machine-os publish workflow." >&2
+            exit 1
+          fi
+
+      - name: Create machine-os release app token
+        id: release_app_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ inputs.release_app_id }}
+          private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
+          owner: agentstation
+          repositories: neovex-machine-os
+          permission-contents: write
+          permission-packages: write
+
+      - name: Download staged machine-os bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.stage_artifact_name }}
+          path: ${{ runner.temp }}/staged-machine-os
+
+      - name: Hydrate staged machine-os bundle
+        run: |
+          cp -R "${RUNNER_TEMP}/staged-machine-os/build-output/." "${BUILD_OUTPUT_DIR}/"
+          cp -R "${RUNNER_TEMP}/staged-machine-os/layout/." "${LAYOUT_DIR}/"
+
+      - name: Verify staged bundle contents
+        run: |
+          test -f "${BUILD_OUTPUT_DIR}/summary.txt"
+          test -f "${BUILD_OUTPUT_DIR}/neovex-machine-os.raw.gz"
+          test -f "${LAYOUT_DIR}/summary.txt"
+          test -f "${LAYOUT_DIR}/index.json"
+          test -d "${LAYOUT_DIR}/blobs/sha256"
+
+      - name: Publish packaged OCI artifact
+        env:
+          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ steps.release_app_token.outputs.app-slug != '' && format('{0}[bot]', steps.release_app_token.outputs.app-slug) || github.actor }}
+          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.release_app_token.outputs.token || github.token }}
+        run: |
+          bash scripts/publish.sh \
+            --layout-dir "${LAYOUT_DIR}" \
+            --build-output-dir "${BUILD_OUTPUT_DIR}" \
+            --image-reference "${{ inputs.image_reference }}" \
+            --release-dir "${RELEASE_DIR}"
+
+      - name: Prepare GitHub release bundle
+        if: steps.release-metadata.outputs.create_release == 'true'
+        run: |
+          cat > "${RELEASE_DIR}/machine-image-reference.txt" <<EOF
+          ghcr.io/agentstation/neovex-machine-os:${{ steps.release-metadata.outputs.release_tag }}
+          EOF
+
+          cat > "${RELEASE_DIR}/release-notes.md" <<EOF
+          neovex-machine-os release ${{ steps.release-metadata.outputs.release_tag }}
+
+          OCI image:
+          - \`ghcr.io/agentstation/neovex-machine-os:${{ steps.release-metadata.outputs.release_tag }}\`
+
+          Source neovex release:
+          - \`https://github.com/agentstation/neovex/releases/tag/${{ inputs.neovex_version }}\`
+
+          Included assets:
+          - \`neovex-machine-os.raw.gz\`
+          - \`checksums.txt\`
+          - \`publish-summary.txt\`
+          - \`machine-image-reference.txt\`
+          EOF
+
+      - name: Create or update GitHub release
+        if: steps.release-metadata.outputs.create_release == 'true'
+        env:
+          GH_TOKEN: ${{ steps.release_app_token.outputs.token || github.token }}
+        run: |
+          release_tag="${{ steps.release-metadata.outputs.release_tag }}"
+          release_repository="agentstation/neovex-machine-os"
+          release_target_sha="$(git rev-parse HEAD)"
+          assets=(
+            "${BUILD_OUTPUT_DIR}/neovex-machine-os.raw.gz"
+            "${RELEASE_DIR}/checksums.txt"
+            "${RELEASE_DIR}/publish-summary.txt"
+            "${RELEASE_DIR}/machine-image-reference.txt"
+          )
+
+          if gh release view "${release_tag}" --repo "${release_repository}" >/dev/null 2>&1; then
+            gh release edit "${release_tag}" \
+              --repo "${release_repository}" \
+              --title "${release_tag}" \
+              --notes-file "${RELEASE_DIR}/release-notes.md"
+            gh release upload "${release_tag}" "${assets[@]}" --repo "${release_repository}" --clobber
+          else
+            gh release create "${release_tag}" \
+              --repo "${release_repository}" \
+              --target "${release_target_sha}" \
+              --title "${release_tag}" \
+              --notes-file "${RELEASE_DIR}/release-notes.md" \
+              "${assets[@]}"
+          fi
+
+      - name: Attest staged machine-os provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.raw.gz
+            ${{ env.RELEASE_DIR }}/checksums.txt
+
+      - name: Upload publish bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: neovex-machine-os-arm64-publish
+          if-no-files-found: error
+          path: |
+            ${{ env.RELEASE_DIR }}/publish-summary.txt
+            ${{ env.RELEASE_DIR }}/checksums.txt

@@ -52,6 +52,11 @@ on:
         required: true
         default: "docker://ghcr.io/agentstation/neovex-machine-os:v0.0.0-dev"
         type: string
+      stage_artifact_name:
+        description: "Optional artifact name used to stage the built machine bundle for a later publish/release lane"
+        required: false
+        default: ""
+        type: string
       release_app_id:
         description: "Optional GitHub App ID used to mint a cross-repo release token for publish/release lanes"
         required: false
@@ -85,6 +90,11 @@ on:
       image_reference:
         description: "Immutable destination image reference for the packaged machine artifact"
         required: true
+        type: string
+      stage_artifact_name:
+        description: "Optional artifact name used to stage the built machine bundle for a later publish/release lane"
+        required: false
+        default: ""
         type: string
       release_app_id:
         description: "Optional GitHub App ID used to mint a cross-repo release token for publish/release lanes"
@@ -355,6 +365,25 @@ jobs:
             --attestation-repository "${{ github.repository }}" \
             --neovex-version "${{ steps.neovex-version.outputs.tag }}"
 
+      - name: Stage reusable machine-os bundle
+        if: inputs.stage_artifact_name != ''
+        run: |
+          stage_root="${RUNNER_TEMP}/neovex-machine-os-stage"
+          rm -rf "${stage_root}"
+          mkdir -p "${stage_root}/build-output" "${stage_root}/layout"
+
+          cp "${BUILD_OUTPUT_DIR}/summary.txt" "${stage_root}/build-output/"
+          cp "${BUILD_OUTPUT_DIR}/neovex-machine-os.raw.gz" "${stage_root}/build-output/"
+          cp -R "${LAYOUT_DIR}/." "${stage_root}/layout/"
+
+      - name: Upload staged machine-os bundle
+        if: inputs.stage_artifact_name != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.stage_artifact_name }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/neovex-machine-os-stage/
+
       - name: Publish packaged OCI artifact
         if: steps.release-policy.outputs.publish == 'true'
         env:
@@ -397,7 +426,7 @@ jobs:
         run: |
           release_tag="${{ steps.release-metadata.outputs.release_tag }}"
           release_repository="agentstation/neovex-machine-os"
-          release_target_sha="${{ github.workflow_sha }}"
+          release_target_sha="$(git rev-parse HEAD)"
           assets=(
             "${BUILD_OUTPUT_DIR}/neovex-machine-os.raw.gz"
             "${RELEASE_DIR}/checksums.txt"

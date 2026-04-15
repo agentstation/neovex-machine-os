@@ -58,9 +58,13 @@ The GitHub Actions workflow (`.github/workflows/build.yml`) runs on
 
 Primary release path:
 
-- `agentstation/neovex` `v*` releases call this workflow twice via
-  `workflow_call`: first as a publish-free contract check, then as the real
-  machine-image publish/release job after the host release succeeds
+- `agentstation/neovex` `v*` releases call `build.yml` first as the staging
+  lane that verifies the machine-os repo and builds the raw-disk OCI bundle
+- that staging lane uploads a reusable machine-os artifact bundle inside the
+  caller's workflow run
+- after the host `agentstation/neovex` release succeeds, the caller invokes
+  `publish.yml`, which downloads that staged bundle and publishes/releases it
+  without rebuilding the machine image
 - the publish/release call must pass `release_app_id` plus the
   `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` secret so the reusable workflow can
   mint its own installation token for `agentstation/neovex-machine-os`
