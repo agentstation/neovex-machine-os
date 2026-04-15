@@ -81,6 +81,9 @@ on:
         description: "Immutable destination image reference for the packaged machine artifact"
         required: true
         type: string
+    secrets:
+      MACHINE_OS_RELEASE_TOKEN:
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.neovex_version || github.ref }}
@@ -276,6 +279,19 @@ jobs:
             echo "create_release=${create_release}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Verify cross-repo release auth
+        if: >-
+          github.event_name == 'workflow_call'
+          && (steps.release-policy.outputs.publish == 'true'
+          || steps.release-metadata.outputs.create_release == 'true')
+        env:
+          MACHINE_OS_RELEASE_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN }}
+        run: |
+          if [[ -z "${MACHINE_OS_RELEASE_TOKEN}" ]]; then
+            echo "MACHINE_OS_RELEASE_TOKEN must be passed to the reusable machine-os workflow when it publishes GHCR artifacts or creates a GitHub release for agentstation/neovex-machine-os." >&2
+            exit 1
+          fi
+
       - name: Pull base images
         run: |
           sudo podman pull quay.io/fedora/fedora-bootc:42 &
@@ -314,7 +330,7 @@ jobs:
         if: steps.release-policy.outputs.publish == 'true'
         env:
           NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}
-          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ github.token }}
+          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.MACHINE_OS_RELEASE_TOKEN || github.token }}
         run: |
           bash scripts/publish.sh \
             --layout-dir "${LAYOUT_DIR}" \
@@ -348,9 +364,11 @@ jobs:
       - name: Create or update GitHub release
         if: steps.release-metadata.outputs.create_release == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN || github.token }}
         run: |
           release_tag="${{ steps.release-metadata.outputs.release_tag }}"
+          release_repository="agentstation/neovex-machine-os"
+          release_target_sha="${{ github.workflow_sha }}"
           assets=(
             "${BUILD_OUTPUT_DIR}/neovex-machine-os.raw.gz"
             "${RELEASE_DIR}/checksums.txt"
@@ -358,14 +376,16 @@ jobs:
             "${RELEASE_DIR}/machine-image-reference.txt"
           )
 
-          if gh release view "${release_tag}" >/dev/null 2>&1; then
+          if gh release view "${release_tag}" --repo "${release_repository}" >/dev/null 2>&1; then
             gh release edit "${release_tag}" \
+              --repo "${release_repository}" \
               --title "${release_tag}" \
               --notes-file "${RELEASE_DIR}/release-notes.md"
-            gh release upload "${release_tag}" "${assets[@]}" --clobber
+            gh release upload "${release_tag}" "${assets[@]}" --repo "${release_repository}" --clobber
           else
             gh release create "${release_tag}" \
-              --target "${GITHUB_SHA}" \
+              --repo "${release_repository}" \
+              --target "${release_target_sha}" \
               --title "${release_tag}" \
               --notes-file "${RELEASE_DIR}/release-notes.md" \
               "${assets[@]}"

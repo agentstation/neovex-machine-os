@@ -58,8 +58,13 @@ The GitHub Actions workflow (`.github/workflows/build.yml`) runs on
 
 Primary release path:
 
-- `agentstation/neovex` `v*` releases call this workflow via `workflow_call`
-  and pass the same tag as `neovex_version`
+- `agentstation/neovex` `v*` releases call this workflow twice via
+  `workflow_call`: first as a publish-free contract check, then as the real
+  machine-image publish/release job after the host release succeeds
+- the publish/release call must pass an explicit `MACHINE_OS_RELEASE_TOKEN`
+  secret because the reusable workflow still needs credentials to create a
+  GitHub Release and publish package artifacts in the separate
+  `agentstation/neovex-machine-os` repository
 - standalone `agentstation/neovex-machine-os` `v*` tags are expected to use
   the same `v*` tag as the embedded neovex release; the workflow resolves the
   binary from `agentstation/neovex/releases/download/<same-tag>/...`
