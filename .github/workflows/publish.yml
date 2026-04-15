@@ -1,13 +1,22 @@
 name: Publish machine-os staged bundle
 run-name: >-
   Publish machine-os${{
-    inputs.release_tag != '' && format(' ({0})', inputs.release_tag)
-    || ''
+    format(' ({0})', inputs.release_tag != '' && inputs.release_tag || inputs.neovex_version)
+  }}${{
+    format(' from {0}#{1}', inputs.source_repository, inputs.source_run_id)
   }}
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
+      source_repository:
+        description: "Repository that owns the staged machine-os bundle (for example agentstation/neovex)"
+        required: true
+        type: string
+      source_run_id:
+        description: "Workflow run ID in the source repository that uploaded the staged machine-os bundle"
+        required: true
+        type: string
       neovex_version:
         description: "Neovex release tag recorded in the machine-os release notes"
         required: true
@@ -28,16 +37,8 @@ on:
       create_release:
         description: "Create or update a GitHub release in the machine-os repo"
         required: false
-        default: false
+        default: true
         type: boolean
-      release_app_id:
-        description: "GitHub App ID used to mint a cross-repo release token for publish/release lanes"
-        required: false
-        default: ""
-        type: string
-    secrets:
-      MACHINE_OS_RELEASE_APP_PRIVATE_KEY:
-        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.release_tag || inputs.neovex_version || github.ref }}
@@ -75,17 +76,35 @@ jobs:
             "${RUNNER_TEMP}/neovex-machine-os-layout" \
             "${RUNNER_TEMP}/neovex-machine-os-release"
 
+      - name: Resolve source repository coordinates
+        id: source-repo
+        run: |
+          source_repository='${{ inputs.source_repository }}'
+          source_owner="${source_repository%%/*}"
+          source_repo="${source_repository#*/}"
+
+          if [[ -z "${source_owner}" || -z "${source_repo}" || "${source_owner}" == "${source_repo}" ]]; then
+            echo "source_repository must be in OWNER/REPO form; got '${source_repository}'." >&2
+            exit 1
+          fi
+
+          {
+            echo "repository=${source_repository}"
+            echo "owner=${source_owner}"
+            echo "repo=${source_repo}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Resolve release metadata
         id: release-metadata
         run: |
-          release_tag="${{ inputs.release_tag }}"
+          release_tag='${{ inputs.release_tag }}'
           if [[ -z "${release_tag}" ]]; then
-            release_tag="${{ inputs.neovex_version }}"
+            release_tag='${{ inputs.neovex_version }}'
           fi
 
-          create_release="${{ inputs.create_release }}"
+          create_release='${{ inputs.create_release }}'
           if [[ -z "${create_release}" ]]; then
-            create_release='false'
+            create_release='true'
           fi
 
           {
@@ -93,35 +112,39 @@ jobs:
             echo "create_release=${create_release}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Verify cross-repo release auth
+      - name: Verify source-artifact app credentials
         env:
+          MACHINE_OS_RELEASE_APP_ID: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
           MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
         run: |
-          if [[ -z "${{ inputs.release_app_id }}" ]]; then
-            echo "release_app_id must be passed to the reusable machine-os publish workflow." >&2
+          if [[ -z "${MACHINE_OS_RELEASE_APP_ID}" ]]; then
+            echo "MACHINE_OS_RELEASE_APP_ID must be configured in neovex-machine-os so this workflow can mint a source-repo artifact token." >&2
             exit 1
           fi
           if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be passed to the reusable machine-os publish workflow." >&2
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured in neovex-machine-os so this workflow can mint a source-repo artifact token." >&2
             exit 1
           fi
 
-      - name: Create machine-os release app token
-        id: release_app_token
+      - name: Create source-repo artifact token
+        id: source_repo_token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ inputs.release_app_id }}
+          app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
-          owner: agentstation
-          repositories: neovex-machine-os
-          permission-contents: write
-          permission-packages: write
+          owner: ${{ steps.source-repo.outputs.owner }}
+          repositories: ${{ steps.source-repo.outputs.repo }}
+          permission-actions: read
+          permission-contents: read
 
       - name: Download staged machine-os bundle
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.stage_artifact_name }}
           path: ${{ runner.temp }}/staged-machine-os
+          repository: ${{ steps.source-repo.outputs.repository }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ steps.source_repo_token.outputs.token }}
 
       - name: Hydrate staged machine-os bundle
         run: |
@@ -138,8 +161,8 @@ jobs:
 
       - name: Publish packaged OCI artifact
         env:
-          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ steps.release_app_token.outputs.app-slug != '' && format('{0}[bot]', steps.release_app_token.outputs.app-slug) || github.actor }}
-          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.release_app_token.outputs.token || github.token }}
+          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}
+          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ github.token }}
         run: |
           bash scripts/publish.sh \
             --layout-dir "${LAYOUT_DIR}" \
@@ -150,33 +173,36 @@ jobs:
       - name: Prepare GitHub release bundle
         if: steps.release-metadata.outputs.create_release == 'true'
         run: |
-          cat > "${RELEASE_DIR}/machine-image-reference.txt" <<EOF
+          cat > "${RELEASE_DIR}/machine-image-reference.txt" <<EOF_RELEASE_REF
           ghcr.io/agentstation/neovex-machine-os:${{ steps.release-metadata.outputs.release_tag }}
-          EOF
+          EOF_RELEASE_REF
 
-          cat > "${RELEASE_DIR}/release-notes.md" <<EOF
+          cat > "${RELEASE_DIR}/release-notes.md" <<EOF_RELEASE_NOTES
           neovex-machine-os release ${{ steps.release-metadata.outputs.release_tag }}
 
           OCI image:
           - \`ghcr.io/agentstation/neovex-machine-os:${{ steps.release-metadata.outputs.release_tag }}\`
 
           Source neovex release:
-          - \`https://github.com/agentstation/neovex/releases/tag/${{ inputs.neovex_version }}\`
+          - \`https://github.com/${{ steps.source-repo.outputs.repository }}/releases/tag/${{ inputs.neovex_version }}\`
+
+          Source workflow run:
+          - \`https://github.com/${{ steps.source-repo.outputs.repository }}/actions/runs/${{ inputs.source_run_id }}\`
 
           Included assets:
           - \`neovex-machine-os.raw.gz\`
           - \`checksums.txt\`
           - \`publish-summary.txt\`
           - \`machine-image-reference.txt\`
-          EOF
+          EOF_RELEASE_NOTES
 
       - name: Create or update GitHub release
         if: steps.release-metadata.outputs.create_release == 'true'
         env:
-          GH_TOKEN: ${{ steps.release_app_token.outputs.token || github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          release_tag="${{ steps.release-metadata.outputs.release_tag }}"
-          release_repository="agentstation/neovex-machine-os"
+          release_tag='${{ steps.release-metadata.outputs.release_tag }}'
+          release_repository='agentstation/neovex-machine-os'
           release_target_sha="$(git rev-parse HEAD)"
           assets=(
             "${BUILD_OUTPUT_DIR}/neovex-machine-os.raw.gz"
