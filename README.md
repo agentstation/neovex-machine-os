@@ -65,6 +65,9 @@ Primary release path:
   secret because the reusable workflow still needs credentials to create a
   GitHub Release and publish package artifacts in the separate
   `agentstation/neovex-machine-os` repository
+- the workflow defaults GHCR authentication to `github.actor`, which matches
+  the current PAT-style token path; a future GitHub App upgrade can override
+  `registry_username` to `x-access-token`
 - standalone `agentstation/neovex-machine-os` `v*` tags are expected to use
   the same `v*` tag as the embedded neovex release; the workflow resolves the
   binary from `agentstation/neovex/releases/download/<same-tag>/...`

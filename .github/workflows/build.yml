@@ -52,6 +52,11 @@ on:
         required: true
         default: "docker://ghcr.io/agentstation/neovex-machine-os:v0.0.0-dev"
         type: string
+      registry_username:
+        description: "Optional registry username override for GHCR publish (for example x-access-token for GitHub App tokens)"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       neovex_version:
@@ -80,6 +85,11 @@ on:
       image_reference:
         description: "Immutable destination image reference for the packaged machine artifact"
         required: true
+        type: string
+      registry_username:
+        description: "Optional registry username override for GHCR publish (for example x-access-token for GitHub App tokens)"
+        required: false
+        default: ""
         type: string
     secrets:
       MACHINE_OS_RELEASE_TOKEN:
@@ -329,7 +339,7 @@ jobs:
       - name: Publish packaged OCI artifact
         if: steps.release-policy.outputs.publish == 'true'
         env:
-          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}
+          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ inputs.registry_username != '' && inputs.registry_username || github.actor }}
           NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.MACHINE_OS_RELEASE_TOKEN || github.token }}
         run: |
           bash scripts/publish.sh \
