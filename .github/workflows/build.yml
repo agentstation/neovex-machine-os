@@ -1,4 +1,10 @@
 name: Build machine-os
+run-name: >-
+  Build machine-os${{
+    inputs.release_tag != '' && format(' ({0})', inputs.release_tag)
+    || startsWith(github.ref, 'refs/tags/') && format(' ({0})', github.ref_name)
+    || ''
+  }}
 
 on:
   pull_request:
@@ -21,11 +27,21 @@ on:
         description: "Neovex release tag to download (e.g. vX.Y.Z)"
         required: true
         type: string
+      release_tag:
+        description: "Optional machine-os release tag to create or update (e.g. vX.Y.Z)"
+        required: false
+        default: ""
+        type: string
       neovex_artifact_name:
         description: "Optional neovex workflow artifact name to consume from the current run"
         required: false
         default: ""
         type: string
+      create_release:
+        description: "Create or update a GitHub release in the machine-os repo"
+        required: true
+        default: false
+        type: boolean
       publish:
         description: "Push the packaged raw-disk OCI artifact to GHCR"
         required: true
@@ -42,11 +58,21 @@ on:
         description: "Neovex release tag to download (e.g. vX.Y.Z)"
         required: true
         type: string
+      release_tag:
+        description: "Optional machine-os release tag to create or update (e.g. vX.Y.Z)"
+        required: false
+        default: ""
+        type: string
       neovex_artifact_name:
         description: "Optional neovex workflow artifact name to consume from the caller run"
         required: false
         default: ""
         type: string
+      create_release:
+        description: "Create or update a GitHub release in the machine-os repo"
+        required: false
+        default: false
+        type: boolean
       publish:
         description: "Push the packaged raw-disk OCI artifact to GHCR"
         required: true
@@ -103,7 +129,7 @@ jobs:
       || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04-arm
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
       attestations: write
@@ -223,6 +249,33 @@ jobs:
             echo "publish=${publish}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve release metadata
+        id: release-metadata
+        run: |
+          release_tag="${{ inputs.release_tag }}"
+          if [[ -z "${release_tag}" && "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          fi
+
+          create_release="${{ inputs.create_release }}"
+          if [[ -z "${create_release}" || "${create_release}" == "false" ]]; then
+            if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+              create_release='true'
+            else
+              create_release='false'
+            fi
+          fi
+
+          if [[ "${create_release}" == "true" && "${{ steps.release-policy.outputs.publish }}" != "true" ]]; then
+            echo "machine-os GitHub releases require publish=true so the release page and GHCR tag stay in sync" >&2
+            exit 1
+          fi
+
+          {
+            echo "release_tag=${release_tag}"
+            echo "create_release=${create_release}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Pull base images
         run: |
           sudo podman pull quay.io/fedora/fedora-bootc:42 &
@@ -268,6 +321,55 @@ jobs:
             --build-output-dir "${BUILD_OUTPUT_DIR}" \
             --image-reference "${{ steps.release-policy.outputs.image_reference }}" \
             --release-dir "${RELEASE_DIR}"
+
+      - name: Prepare GitHub release bundle
+        if: steps.release-metadata.outputs.create_release == 'true'
+        run: |
+          cat > "${RELEASE_DIR}/machine-image-reference.txt" <<EOF
+          ghcr.io/agentstation/neovex-machine-os:${{ steps.release-metadata.outputs.release_tag }}
+          EOF
+
+          cat > "${RELEASE_DIR}/release-notes.md" <<EOF
+          neovex-machine-os release ${{ steps.release-metadata.outputs.release_tag }}
+
+          OCI image:
+          - \`ghcr.io/agentstation/neovex-machine-os:${{ steps.release-metadata.outputs.release_tag }}\`
+
+          Source neovex release:
+          - \`https://github.com/agentstation/neovex/releases/tag/${{ steps.neovex-version.outputs.tag }}\`
+
+          Included assets:
+          - \`neovex-machine-os.raw.gz\`
+          - \`checksums.txt\`
+          - \`publish-summary.txt\`
+          - \`machine-image-reference.txt\`
+          EOF
+
+      - name: Create or update GitHub release
+        if: steps.release-metadata.outputs.create_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_tag="${{ steps.release-metadata.outputs.release_tag }}"
+          assets=(
+            "${BUILD_OUTPUT_DIR}/neovex-machine-os.raw.gz"
+            "${RELEASE_DIR}/checksums.txt"
+            "${RELEASE_DIR}/publish-summary.txt"
+            "${RELEASE_DIR}/machine-image-reference.txt"
+          )
+
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release edit "${release_tag}" \
+              --title "${release_tag}" \
+              --notes-file "${RELEASE_DIR}/release-notes.md"
+            gh release upload "${release_tag}" "${assets[@]}" --clobber
+          else
+            gh release create "${release_tag}" \
+              --target "${GITHUB_SHA}" \
+              --title "${release_tag}" \
+              --notes-file "${RELEASE_DIR}/release-notes.md" \
+              "${assets[@]}"
+          fi
 
       - name: Attest build provenance
         if: steps.release-policy.outputs.publish == 'true'
