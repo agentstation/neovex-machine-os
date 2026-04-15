@@ -61,13 +61,12 @@ Primary release path:
 - `agentstation/neovex` `v*` releases call this workflow twice via
   `workflow_call`: first as a publish-free contract check, then as the real
   machine-image publish/release job after the host release succeeds
-- the publish/release call must pass an explicit `MACHINE_OS_RELEASE_TOKEN`
-  secret because the reusable workflow still needs credentials to create a
-  GitHub Release and publish package artifacts in the separate
-  `agentstation/neovex-machine-os` repository
-- the workflow defaults GHCR authentication to `github.actor`, which matches
-  the current PAT-style token path; a future GitHub App upgrade can override
-  `registry_username` to `x-access-token`
+- the publish/release call must pass `release_app_id` plus the
+  `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` secret so the reusable workflow can
+  mint its own installation token for `agentstation/neovex-machine-os`
+- the reusable workflow uses that GitHub App token for both GHCR publishing
+  and `gh release ... --repo agentstation/neovex-machine-os`; standalone
+  runs in this repository continue to use the native `github.token`
 - standalone `agentstation/neovex-machine-os` `v*` tags are expected to use
   the same `v*` tag as the embedded neovex release; the workflow resolves the
   binary from `agentstation/neovex/releases/download/<same-tag>/...`

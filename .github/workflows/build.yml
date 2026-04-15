@@ -52,8 +52,8 @@ on:
         required: true
         default: "docker://ghcr.io/agentstation/neovex-machine-os:v0.0.0-dev"
         type: string
-      registry_username:
-        description: "Optional registry username override for GHCR publish (for example x-access-token for GitHub App tokens)"
+      release_app_id:
+        description: "Optional GitHub App ID used to mint a cross-repo release token for publish/release lanes"
         required: false
         default: ""
         type: string
@@ -86,13 +86,13 @@ on:
         description: "Immutable destination image reference for the packaged machine artifact"
         required: true
         type: string
-      registry_username:
-        description: "Optional registry username override for GHCR publish (for example x-access-token for GitHub App tokens)"
+      release_app_id:
+        description: "Optional GitHub App ID used to mint a cross-repo release token for publish/release lanes"
         required: false
         default: ""
         type: string
     secrets:
-      MACHINE_OS_RELEASE_TOKEN:
+      MACHINE_OS_RELEASE_APP_PRIVATE_KEY:
         required: false
 
 concurrency:
@@ -295,12 +295,31 @@ jobs:
           && (steps.release-policy.outputs.publish == 'true'
           || steps.release-metadata.outputs.create_release == 'true')
         env:
-          MACHINE_OS_RELEASE_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN }}
+          MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
         run: |
-          if [[ -z "${MACHINE_OS_RELEASE_TOKEN}" ]]; then
-            echo "MACHINE_OS_RELEASE_TOKEN must be passed to the reusable machine-os workflow when it publishes GHCR artifacts or creates a GitHub release for agentstation/neovex-machine-os." >&2
+          if [[ -z "${{ inputs.release_app_id }}" ]]; then
+            echo "release_app_id must be passed to the reusable machine-os workflow when it publishes GHCR artifacts or creates a GitHub release for agentstation/neovex-machine-os." >&2
             exit 1
           fi
+          if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be passed to the reusable machine-os workflow when it publishes GHCR artifacts or creates a GitHub release for agentstation/neovex-machine-os." >&2
+            exit 1
+          fi
+
+      - name: Create machine-os release app token
+        id: release_app_token
+        if: >-
+          github.event_name == 'workflow_call'
+          && (steps.release-policy.outputs.publish == 'true'
+          || steps.release-metadata.outputs.create_release == 'true')
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ inputs.release_app_id }}
+          private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
+          owner: agentstation
+          repositories: neovex-machine-os
+          permission-contents: write
+          permission-packages: write
 
       - name: Pull base images
         run: |
@@ -339,8 +358,8 @@ jobs:
       - name: Publish packaged OCI artifact
         if: steps.release-policy.outputs.publish == 'true'
         env:
-          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ inputs.registry_username != '' && inputs.registry_username || github.actor }}
-          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.MACHINE_OS_RELEASE_TOKEN || github.token }}
+          NEOVEX_MACHINE_OS_REGISTRY_USERNAME: ${{ steps.release_app_token.outputs.app-slug != '' && format('{0}[bot]', steps.release_app_token.outputs.app-slug) || github.actor }}
+          NEOVEX_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.release_app_token.outputs.token || github.token }}
         run: |
           bash scripts/publish.sh \
             --layout-dir "${LAYOUT_DIR}" \
@@ -374,7 +393,7 @@ jobs:
       - name: Create or update GitHub release
         if: steps.release-metadata.outputs.create_release == 'true'
         env:
-          GH_TOKEN: ${{ secrets.MACHINE_OS_RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.release_app_token.outputs.token || github.token }}
         run: |
           release_tag="${{ steps.release-metadata.outputs.release_tag }}"
           release_repository="agentstation/neovex-machine-os"
