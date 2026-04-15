@@ -116,6 +116,7 @@ jobs:
   verify-contract:
     name: Verify machine-os contract
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Check out machine-os repository
@@ -151,6 +152,7 @@ jobs:
       || github.event_name == 'workflow_dispatch'
       || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
     permissions:
       contents: write
       packages: write
@@ -196,7 +198,7 @@ jobs:
       - name: Download neovex binary from workflow artifact
         id: artifact-download
         if: inputs.neovex_artifact_name != ''
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.neovex_artifact_name }}
           path: ${{ runner.temp }}
@@ -254,7 +256,7 @@ jobs:
           fi
 
           publish="${{ inputs.publish }}"
-          if [[ -z "${publish}" || "${publish}" == "false" ]]; then
+          if [[ -z "${publish}" ]]; then
             if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
               publish='true'
             else
@@ -281,7 +283,7 @@ jobs:
           fi
 
           create_release="${{ inputs.create_release }}"
-          if [[ -z "${create_release}" || "${create_release}" == "false" ]]; then
+          if [[ -z "${create_release}" ]]; then
             if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
               create_release='true'
             else

@@ -50,6 +50,7 @@ jobs:
   publish-arm64:
     name: Publish machine-os (linux arm64)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     permissions:
       contents: write
       packages: write
@@ -83,7 +84,7 @@ jobs:
           fi
 
           create_release="${{ inputs.create_release }}"
-          if [[ -z "${create_release}" || "${create_release}" == "false" ]]; then
+          if [[ -z "${create_release}" ]]; then
             create_release='false'
           fi
 
@@ -117,7 +118,7 @@ jobs:
           permission-packages: write
 
       - name: Download staged machine-os bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.stage_artifact_name }}
           path: ${{ runner.temp }}/staged-machine-os
