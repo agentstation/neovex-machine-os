@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: package-neovex-machine-os-oci.sh [options]
+usage: package-oci.sh [options]
 
 Wrap a Neovex machine raw-disk artifact in the OCI image-layout shape that the
 macOS machine manager already consumes from registries.
@@ -17,10 +17,13 @@ Options:
   --ref-name <name>            Explicit OCI layout ref name (defaults from image reference)
   --arch <arch>                OCI architecture (default: host architecture)
   --os <os>                    OCI operating system (default: linux)
+  --source-repository-url <u>  OCI source repository URL
+  --attestation-repository <r> GitHub repo expected to carry build attestations
+  --neovex-version <tag>       Embedded neovex version tag (for example v0.1.0)
   -h, --help                   Show this help
 
 Examples:
-  bash scripts/package-neovex-machine-os-oci.sh \
+  bash scripts/package-oci.sh \
     --build-output-dir /tmp/neovex-machine-os \
     --image-reference docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0 \
     --layout-dir /tmp/neovex-machine-os/oci-layout
@@ -58,6 +61,31 @@ infer_layer_media_type() {
   esac
 }
 
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "${value}"
+}
+
+build_annotation_entries() {
+  local ref_name="$1"
+  local source_repository_url="$2"
+  local attestation_repository="$3"
+  local neovex_version="$4"
+
+  printf '"org.opencontainers.image.ref.name":"%s","org.opencontainers.image.source":"%s","io.neovex.machine.attestation.repository":"%s"' \
+    "$(json_escape "${ref_name}")" \
+    "$(json_escape "${source_repository_url}")" \
+    "$(json_escape "${attestation_repository}")"
+  if [[ -n "${neovex_version}" ]]; then
+    printf ',"io.neovex.machine.neovex.version":"%s"' "$(json_escape "${neovex_version}")"
+  fi
+}
+
 derive_ref_name() {
   local reference="$1"
   local stripped="${reference#docker://}"
@@ -89,6 +117,9 @@ image_reference=""
 ref_name=""
 oci_arch="$(normalize_arch "${NEOVEX_MACHINE_OS_PACKAGE_TEST_ARCH:-$(uname -m)}")"
 oci_os="linux"
+source_repository_url="${NEOVEX_MACHINE_OS_SOURCE_REPOSITORY_URL:-https://github.com/agentstation/neovex-machine-os}"
+attestation_repository="${NEOVEX_MACHINE_OS_ATTESTATION_REPOSITORY:-agentstation/neovex-machine-os}"
+neovex_version="${NEOVEX_MACHINE_OS_VERSION:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -124,6 +155,18 @@ while [[ $# -gt 0 ]]; do
       oci_os="${2:-}"
       shift 2
       ;;
+    --source-repository-url)
+      source_repository_url="${2:-}"
+      shift 2
+      ;;
+    --attestation-repository)
+      attestation_repository="${2:-}"
+      shift 2
+      ;;
+    --neovex-version)
+      neovex_version="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -154,6 +197,9 @@ if [[ -n "${summary_file}" ]]; then
       raw_disk_path="$(summary_value "${summary_file}" raw_disk_path)"
     fi
   fi
+  if [[ -z "${neovex_version}" ]]; then
+    neovex_version="$(summary_value "${summary_file}" neovex_version)"
+  fi
 fi
 
 if [[ -z "${raw_disk_path}" ]]; then
@@ -176,6 +222,14 @@ if [[ -z "${layout_dir}" ]]; then
   base_dir="${build_output_dir:-$(dirname "${raw_disk_path}")}"
   layout_dir="${base_dir%/}/oci-layout"
 fi
+if [[ -z "${source_repository_url}" ]]; then
+  echo "--source-repository-url cannot be empty" >&2
+  exit 64
+fi
+if [[ -z "${attestation_repository}" ]]; then
+  echo "--attestation-repository cannot be empty" >&2
+  exit 64
+fi
 
 rm -rf "${layout_dir}"
 mkdir -p "${layout_dir}/blobs/sha256"
@@ -191,6 +245,13 @@ cp "${raw_disk_path}" "${layer_blob_path}"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "${temp_dir}"' EXIT
 
+manifest_annotations="$(build_annotation_entries \
+  "${ref_name}" \
+  "${source_repository_url}" \
+  "${attestation_repository}" \
+  "${neovex_version}")"
+index_annotations="$(printf '"disktype":"raw",%s' "${manifest_annotations}")"
+
 config_path="${temp_dir}/config.json"
 cat >"${config_path}" <<EOF
 {"architecture":"${oci_arch}","os":"${oci_os}","rootfs":{"type":"layers","diff_ids":[]},"config":{}}
@@ -202,7 +263,7 @@ cp "${config_path}" "${layout_dir}/blobs/sha256/${config_hex}"
 
 manifest_path="${temp_dir}/manifest.json"
 cat >"${manifest_path}" <<EOF
-{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","size":${config_size},"digest":"${config_digest}"},"layers":[{"mediaType":"${layer_media_type}","size":${layer_size},"digest":"${layer_digest}","annotations":{"org.opencontainers.image.title":"${layer_title}"}}]}
+{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","annotations":{${manifest_annotations}},"config":{"mediaType":"application/vnd.oci.image.config.v1+json","size":${config_size},"digest":"${config_digest}"},"layers":[{"mediaType":"${layer_media_type}","size":${layer_size},"digest":"${layer_digest}","annotations":{"org.opencontainers.image.title":"${layer_title}"}}]}
 EOF
 manifest_size="$(file_size_bytes "${manifest_path}")"
 manifest_hex="$(sha256_hex "${manifest_path}")"
@@ -210,7 +271,7 @@ manifest_digest="sha256:${manifest_hex}"
 cp "${manifest_path}" "${layout_dir}/blobs/sha256/${manifest_hex}"
 
 cat >"${layout_dir}/index.json" <<EOF
-{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","size":${manifest_size},"digest":"${manifest_digest}","platform":{"architecture":"${oci_arch}","os":"${oci_os}"},"annotations":{"disktype":"raw","org.opencontainers.image.ref.name":"${ref_name}"}}]}
+{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","size":${manifest_size},"digest":"${manifest_digest}","platform":{"architecture":"${oci_arch}","os":"${oci_os}"},"annotations":{${index_annotations}}}]}
 EOF
 printf '{"imageLayoutVersion":"1.0.0"}\n' >"${layout_dir}/oci-layout"
 
@@ -221,6 +282,9 @@ image_reference=${image_reference:-<unspecified>}
 ref_name=${ref_name}
 oci_arch=${oci_arch}
 oci_os=${oci_os}
+source_repository_url=${source_repository_url}
+attestation_repository=${attestation_repository}
+neovex_version=${neovex_version:-<unspecified>}
 layer_media_type=${layer_media_type}
 layer_title=${layer_title}
 layer_digest=${layer_digest}

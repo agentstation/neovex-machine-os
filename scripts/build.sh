@@ -10,6 +10,7 @@ image recipe and a pre-built Linux neovex binary.
 
 Options:
   --neovex-binary <path>              Linux neovex binary to install into the guest (required)
+  --neovex-version <tag>              Embedded neovex version tag recorded in the build summary
   --output-dir <path>                 Output directory passed through to the image recipe
   --image-name <reference>            OCI tag passed through to the image recipe
   --fcos-base-image <reference>       Base image passed through to the image recipe
@@ -32,6 +33,7 @@ require_command() {
 }
 
 neovex_binary=""
+neovex_version=""
 output_dir=""
 image_name=""
 fcos_base_image=""
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --neovex-binary)
       neovex_binary="${2:-}"
+      shift 2
+      ;;
+    --neovex-version)
+      neovex_version="${2:-}"
       shift 2
       ;;
     --output-dir)
@@ -104,6 +110,9 @@ echo "build.recipe=${recipe_script}"
 args=(--neovex-binary "${neovex_binary}")
 if [[ -n "${output_dir}" ]]; then
   args+=(--output-dir "${output_dir}")
+fi
+if [[ -n "${neovex_version}" ]]; then
+  args+=(--neovex-version "${neovex_version}")
 fi
 if [[ -n "${image_name}" ]]; then
   args+=(--image-name "${image_name}")

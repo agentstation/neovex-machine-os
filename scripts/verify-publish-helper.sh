@@ -13,7 +13,10 @@ bash "${repo_root}/scripts/package-oci.sh" \
   --raw-disk "${raw_disk_path}" \
   --image-reference docker://ghcr.io/agentstation/neovex-machine-os:latest \
   --layout-dir "${layout_dir}" \
-  --arch arm64
+  --arch arm64 \
+  --source-repository-url https://github.com/agentstation/neovex-machine-os \
+  --attestation-repository agentstation/neovex-machine-os \
+  --neovex-version v9.9.9
 
 mkdir -p "${temp_dir}/bin"
 cat >"${temp_dir}/bin/skopeo" <<'EOF'
@@ -44,5 +47,8 @@ test -f "${release_dir}/checksums.txt"
 test -f "${release_dir}/publish-summary.txt"
 grep -F 'image_reference=docker://ghcr.io/agentstation/neovex-machine-os:latest' "${release_dir}/publish-summary.txt" >/dev/null
 grep -F 'additional_references=docker://ghcr.io/agentstation/neovex-machine-os:next' "${release_dir}/publish-summary.txt" >/dev/null
+grep -F 'source_repository_url=https://github.com/agentstation/neovex-machine-os' "${release_dir}/oci-layout-summary.txt" >/dev/null
+grep -F 'attestation_repository=agentstation/neovex-machine-os' "${release_dir}/oci-layout-summary.txt" >/dev/null
+grep -F 'neovex_version=v9.9.9' "${release_dir}/oci-layout-summary.txt" >/dev/null
 
 printf 'verified neovex machine-os publish wrapper\n'

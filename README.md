@@ -31,13 +31,19 @@ Requires a Linux host with podman and root access:
 
 ```bash
 # Download a neovex binary first
-curl -fsSL -o /tmp/neovex \
+curl -fsSL -o /tmp/neovex_linux_arm64.tar.gz \
   https://github.com/agentstation/neovex/releases/latest/download/neovex_linux_arm64.tar.gz
+tar xzf /tmp/neovex_linux_arm64.tar.gz -C /tmp
 
 sudo bash scripts/build.sh \
   --neovex-binary /tmp/neovex \
+  --neovex-version v0.1.0 \
   --output-dir /tmp/neovex-machine-os
 ```
+
+`--neovex-version` is optional for ad hoc local builds, but release and CI
+lanes should pass it so the build summary and packaged OCI metadata record the
+embedded Neovex version explicitly.
 
 ## CI
 
@@ -46,11 +52,27 @@ The GitHub Actions workflow (`.github/workflows/build.yml`) runs on
 
 1. **verify-contract** — script syntax, help entrypoints, deterministic
    helper tests
-2. **build-arm64** — downloads the neovex binary from GitHub Releases,
-   builds the guest image, packages as OCI layout, publishes to GHCR on
-   `v*` tags with attestation
+2. **build-arm64** — downloads or receives the matching neovex Linux binary,
+   builds the guest image, packages it as OCI layout, publishes to GHCR on
+   `v*` tags, and attests the build output
 
-Triggered by pushes to main (path-filtered), `v*` tags, and
+Primary release path:
+
+- `agentstation/neovex` `v*` releases call this workflow via `workflow_call`
+  and pass the same tag as `neovex_version`
+- standalone `agentstation/neovex-machine-os` `v*` tags are expected to use
+  the same `v*` tag as the embedded neovex release; the workflow resolves the
+  binary from `agentstation/neovex/releases/download/<same-tag>/...`
+- non-release validation runs may float to Neovex's latest published release,
+  but they do not publish immutable artifacts
+
+Published OCI metadata includes:
+
+- `org.opencontainers.image.source=https://github.com/agentstation/neovex-machine-os`
+- `io.neovex.machine.attestation.repository=<repo that owns the attestation>`
+- `io.neovex.machine.neovex.version=<embedded neovex tag>`
+
+Triggered by pushes to main (path-filtered), `v*` tags, `workflow_call`, and
 `workflow_dispatch`.
 
 ## License

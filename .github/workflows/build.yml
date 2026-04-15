@@ -121,8 +121,13 @@ jobs:
         run: |
           if [[ -n "${{ inputs.neovex_version }}" ]]; then
             echo "tag=${{ inputs.neovex_version }}" >> "${GITHUB_OUTPUT}"
+          elif [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            # Standalone machine-os release tags are expected to mirror the
+            # embedded neovex version exactly.
+            echo "tag=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
           else
-            # Tag push on this repo — use the latest neovex release
+            # Non-release validation lanes can float to the latest published
+            # neovex release because they do not publish immutable artifacts.
             tag="$(gh api repos/agentstation/neovex/releases/latest --jq '.tag_name')"
             echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           fi
@@ -192,7 +197,7 @@ jobs:
 
           publish="${{ inputs.publish }}"
           if [[ -z "${publish}" || "${publish}" == "false" ]]; then
-            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
               publish='true'
             else
               publish='false'
@@ -219,6 +224,7 @@ jobs:
         run: |
           sudo bash scripts/build.sh \
             --neovex-binary "${neovex_binary}" \
+            --neovex-version "${{ steps.neovex-version.outputs.tag }}" \
             --output-dir "${BUILD_OUTPUT_DIR}"
           sudo chown -R "$(id -u):$(id -g)" \
             "${BUILD_OUTPUT_DIR}"
@@ -237,7 +243,10 @@ jobs:
             --build-output-dir "${BUILD_OUTPUT_DIR}" \
             --image-reference "${{ steps.release-policy.outputs.image_reference }}" \
             --layout-dir "${LAYOUT_DIR}" \
-            --arch arm64
+            --arch arm64 \
+            --source-repository-url "https://github.com/agentstation/neovex-machine-os" \
+            --attestation-repository "${{ github.repository }}" \
+            --neovex-version "${{ steps.neovex-version.outputs.tag }}"
 
       - name: Publish packaged OCI artifact
         if: steps.release-policy.outputs.publish == 'true'

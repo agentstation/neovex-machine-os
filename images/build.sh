@@ -9,6 +9,7 @@ Build the Neovex Fedora CoreOS guest image recipe on Linux.
 
 Options:
   --neovex-binary <path>                 Linux neovex binary to install into the guest
+  --neovex-version <tag>                 Embedded neovex version tag recorded in summary output
   --output-dir <path>                   Output directory (default: ./out)
   --image-name <reference>              Local OCI tag (default: localhost/neovex-machine-os:dev)
   --fcos-base-image <reference>         Fedora CoreOS base image
@@ -53,6 +54,7 @@ sha256_hex() {
 }
 
 neovex_binary=""
+neovex_version=""
 output_dir=""
 image_name="localhost/neovex-machine-os:dev"
 fcos_base_image="quay.io/fedora/fedora-bootc:42"
@@ -62,6 +64,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --neovex-binary)
       neovex_binary="${2:?missing neovex binary path}"
+      shift 2
+      ;;
+    --neovex-version)
+      neovex_version="${2:?missing neovex version}"
       shift 2
       ;;
     --output-dir)
@@ -171,6 +177,7 @@ cat >"${output_dir}/summary.txt" <<EOF
 image_name=${image_name}
 fcos_base_image=${fcos_base_image}
 neovex_binary=${neovex_binary}
+neovex_version=${neovex_version:-<unspecified>}
 neovex_binary_sha256=${neovex_binary_sha256}
 containerfile_sha256=${containerfile_sha256}
 build_common_sha256=${build_common_sha256}

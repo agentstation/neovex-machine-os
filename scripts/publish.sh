@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: publish-neovex-machine-os.sh [options]
+usage: publish.sh [options]
 
 Push a packaged Neovex machine raw-disk OCI layout to a registry and stage a
 release bundle if requested.
@@ -23,7 +23,7 @@ Environment:
   NEOVEX_MACHINE_OS_REGISTRY_PASSWORD  Optional registry password
 
 Example:
-  bash scripts/publish-neovex-machine-os.sh \
+  bash scripts/publish.sh \
     --layout-dir /tmp/neovex-machine-os/oci-layout \
     --image-reference docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0 \
     --additional-reference docker://ghcr.io/agentstation/neovex-machine-os:stable \

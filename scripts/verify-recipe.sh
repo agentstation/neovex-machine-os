@@ -73,6 +73,7 @@ NEOVEX_MACHINE_OS_BUILD_TEST_UNAME=Linux \
 NEOVEX_MACHINE_OS_BUILD_TEST_UID=0 \
 bash "${recipe_dir}/build.sh" \
   --neovex-binary "${neovex_binary}" \
+  --neovex-version v1.2.3 \
   --output-dir "${output_dir}" \
   --context-dir "${context_dir}"
 
@@ -84,6 +85,7 @@ grep -F -- 'save --format oci-archive' "${temp_dir}/podman.log" >/dev/null
 grep -F -- 'bootc-image-builder' "${temp_dir}/podman.log" >/dev/null
 grep -F -- '--type raw' "${temp_dir}/podman.log" >/dev/null
 grep -E '^neovex_binary_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
+grep -F 'neovex_version=v1.2.3' "${output_dir}/summary.txt" >/dev/null
 grep -E '^containerfile_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
 grep -E '^build_common_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
 grep -E '^oci_archive_sha256=[0-9a-f]{64}$' "${output_dir}/summary.txt" >/dev/null
