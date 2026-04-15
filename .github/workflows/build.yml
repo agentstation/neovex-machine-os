@@ -21,6 +21,11 @@ on:
         description: "Neovex release tag to download (e.g. vX.Y.Z)"
         required: true
         type: string
+      neovex_artifact_name:
+        description: "Optional neovex workflow artifact name to consume from the current run"
+        required: false
+        default: ""
+        type: string
       publish:
         description: "Push the packaged raw-disk OCI artifact to GHCR"
         required: true
@@ -36,6 +41,11 @@ on:
       neovex_version:
         description: "Neovex release tag to download (e.g. vX.Y.Z)"
         required: true
+        type: string
+      neovex_artifact_name:
+        description: "Optional neovex workflow artifact name to consume from the caller run"
+        required: false
+        default: ""
         type: string
       publish:
         description: "Push the packaged raw-disk OCI artifact to GHCR"
@@ -136,15 +146,14 @@ jobs:
 
       - name: Download neovex binary from workflow artifact
         id: artifact-download
-        if: github.event_name == 'workflow_call'
+        if: inputs.neovex_artifact_name != ''
         uses: actions/download-artifact@v4
         with:
-          name: neovex_linux_arm64
+          name: ${{ inputs.neovex_artifact_name }}
           path: ${{ runner.temp }}
-        continue-on-error: true
 
       - name: Download neovex binary from GitHub Release
-        if: steps.artifact-download.outcome != 'success'
+        if: inputs.neovex_artifact_name == ''
         run: |
           tag="${{ steps.neovex-version.outputs.tag }}"
           curl -fsSL -o "${RUNNER_TEMP}/neovex_linux_arm64.tar.gz" \
