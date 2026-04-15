@@ -214,3 +214,4 @@ jobs:
           path: |
             ${{ env.RELEASE_DIR }}/publish-summary.txt
             ${{ env.RELEASE_DIR }}/checksums.txt
+          compression-level: 0

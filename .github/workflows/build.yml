@@ -383,6 +383,7 @@ jobs:
           name: ${{ inputs.stage_artifact_name }}
           if-no-files-found: error
           path: ${{ runner.temp }}/neovex-machine-os-stage/
+          compression-level: 0
 
       - name: Publish packaged OCI artifact
         if: steps.release-policy.outputs.publish == 'true'
@@ -469,6 +470,7 @@ jobs:
             ${{ env.BUILD_OUTPUT_DIR }}/neovex-machine-os.raw.gz
             ${{ env.LAYOUT_DIR }}/summary.txt
             ${{ env.LAYOUT_DIR }}/index.json
+          compression-level: 0
 
       - name: Upload publish bundle
         if: steps.release-policy.outputs.publish == 'true'
@@ -479,3 +481,4 @@ jobs:
           path: |
             ${{ env.RELEASE_DIR }}/publish-summary.txt
             ${{ env.RELEASE_DIR }}/checksums.txt
+          compression-level: 0
