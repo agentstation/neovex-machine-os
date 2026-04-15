@@ -41,7 +41,7 @@ Preferred wrapper:
 ```bash
 sudo bash scripts/build.sh \
   --neovex-binary /absolute/path/to/neovex-linux-arm64 \
-  --neovex-version v0.1.0 \
+  --neovex-version vX.Y.Z \
   --output-dir /tmp/neovex-machine-os
 ```
 
@@ -50,7 +50,7 @@ Direct recipe entrypoint:
 ```bash
 sudo bash images/build.sh \
   --neovex-binary /absolute/path/to/neovex-linux-arm64 \
-  --neovex-version v0.1.0 \
+  --neovex-version vX.Y.Z \
   --output-dir /tmp/neovex-machine-os
 ```
 
@@ -65,7 +65,7 @@ Package the raw disk into the OCI layout expected by the host manager:
 ```bash
 bash scripts/package-oci.sh \
   --build-output-dir /tmp/neovex-machine-os \
-  --image-reference docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0 \
+  --image-reference docker://ghcr.io/agentstation/neovex-machine-os:vX.Y.Z \
   --layout-dir /tmp/neovex-machine-os/oci-layout
 ```
 
@@ -74,7 +74,7 @@ Publish the packaged layout:
 ```bash
 bash scripts/publish.sh \
   --layout-dir /tmp/neovex-machine-os/oci-layout \
-  --image-reference docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0 \
+  --image-reference docker://ghcr.io/agentstation/neovex-machine-os:vX.Y.Z \
   --additional-reference docker://ghcr.io/agentstation/neovex-machine-os:stable \
   --release-dir /tmp/neovex-machine-os/release
 ```

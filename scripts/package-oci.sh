@@ -19,13 +19,13 @@ Options:
   --os <os>                    OCI operating system (default: linux)
   --source-repository-url <u>  OCI source repository URL
   --attestation-repository <r> GitHub repo expected to carry build attestations
-  --neovex-version <tag>       Embedded neovex version tag (for example v0.1.0)
+  --neovex-version <tag>       Embedded neovex version tag (for example vX.Y.Z)
   -h, --help                   Show this help
 
 Examples:
   bash scripts/package-oci.sh \
     --build-output-dir /tmp/neovex-machine-os \
-    --image-reference docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0 \
+    --image-reference docker://ghcr.io/agentstation/neovex-machine-os:vX.Y.Z \
     --layout-dir /tmp/neovex-machine-os/oci-layout
 EOF
 }

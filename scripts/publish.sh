@@ -25,7 +25,7 @@ Environment:
 Example:
   bash scripts/publish.sh \
     --layout-dir /tmp/neovex-machine-os/oci-layout \
-    --image-reference docker://ghcr.io/agentstation/neovex-machine-os:v0.1.0 \
+    --image-reference docker://ghcr.io/agentstation/neovex-machine-os:vX.Y.Z \
     --additional-reference docker://ghcr.io/agentstation/neovex-machine-os:stable \
     --release-dir /tmp/neovex-machine-os/release
 EOF

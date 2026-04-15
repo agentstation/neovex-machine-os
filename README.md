@@ -37,7 +37,7 @@ tar xzf /tmp/neovex_linux_arm64.tar.gz -C /tmp
 
 sudo bash scripts/build.sh \
   --neovex-binary /tmp/neovex \
-  --neovex-version v0.1.0 \
+  --neovex-version vX.Y.Z \
   --output-dir /tmp/neovex-machine-os
 ```
 

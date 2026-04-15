@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       neovex_version:
-        description: "Neovex release tag to download (e.g. v0.1.0)"
+        description: "Neovex release tag to download (e.g. vX.Y.Z)"
         required: true
         type: string
       publish:
@@ -34,7 +34,7 @@ on:
   workflow_call:
     inputs:
       neovex_version:
-        description: "Neovex release tag to download (e.g. v0.1.0)"
+        description: "Neovex release tag to download (e.g. vX.Y.Z)"
         required: true
         type: string
       publish:
@@ -205,7 +205,7 @@ jobs:
           fi
 
           if [[ "${publish}" == 'true' && ! "${image_reference}" =~ :v[0-9] ]]; then
-            echo "publishes must use an immutable version tag such as v0.1.0" >&2
+            echo "publishes must use an immutable version tag such as vX.Y.Z" >&2
             exit 1
           fi
 
