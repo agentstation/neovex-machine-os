@@ -129,12 +129,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Download neovex binary
+      - name: Download neovex binary from workflow artifact
+        id: artifact-download
+        if: github.event_name == 'workflow_call'
+        uses: actions/download-artifact@v4
+        with:
+          name: neovex_linux_arm64
+          path: ${{ runner.temp }}
+        continue-on-error: true
+
+      - name: Download neovex binary from GitHub Release
+        if: steps.artifact-download.outcome != 'success'
         run: |
           tag="${{ steps.neovex-version.outputs.tag }}"
-          curl -fsSL -o "${RUNNER_TEMP}/neovex.tar.gz" \
+          curl -fsSL -o "${RUNNER_TEMP}/neovex_linux_arm64.tar.gz" \
             "https://github.com/agentstation/neovex/releases/download/${tag}/neovex_linux_arm64.tar.gz"
-          tar xzf "${RUNNER_TEMP}/neovex.tar.gz" -C "${RUNNER_TEMP}"
+
+      - name: Extract neovex binary
+        run: |
+          tar xzf "${RUNNER_TEMP}/neovex_linux_arm64.tar.gz" -C "${RUNNER_TEMP}"
           chmod +x "${RUNNER_TEMP}/neovex"
           echo "neovex_binary=${RUNNER_TEMP}/neovex" >> "${GITHUB_ENV}"
 
