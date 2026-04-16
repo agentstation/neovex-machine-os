@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 recipe_dir="${repo_root}/images"
+source "${repo_root}/scripts/test-helpers.sh"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "${temp_dir}"' EXIT
 
@@ -31,7 +32,7 @@ context_dir="${temp_dir}/context"
 output_dir="${temp_dir}/out"
 mkdir -p "${fake_bin}" "${context_dir}" "${output_dir}"
 
-cat >"${fake_bin}/podman" <<'FAKEOF'
+write_executable_stub "${fake_bin}/podman" <<'FAKEOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${TMPDIR}/podman.log"
@@ -58,14 +59,8 @@ fi
 exit 0
 FAKEOF
 
-chmod 0755 "${fake_bin}/podman"
-
 neovex_binary="${temp_dir}/neovex"
-cat >"${neovex_binary}" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-chmod 0755 "${neovex_binary}"
+write_noop_executable "${neovex_binary}"
 
 TMPDIR="${temp_dir}" \
 PATH="${fake_bin}:${PATH}" \

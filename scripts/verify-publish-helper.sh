@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${repo_root}/scripts/test-helpers.sh"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "${temp_dir}"' EXIT
 
@@ -19,13 +20,12 @@ bash "${repo_root}/scripts/package-oci.sh" \
   --neovex-version v9.9.9
 
 mkdir -p "${temp_dir}/bin"
-cat >"${temp_dir}/bin/skopeo" <<'EOF'
+write_executable_stub "${temp_dir}/bin/skopeo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${TMPDIR}/skopeo.log"
 exit 0
 EOF
-chmod 0755 "${temp_dir}/bin/skopeo"
 
 release_dir="${temp_dir}/release"
 PATH="${temp_dir}/bin:${PATH}" \
