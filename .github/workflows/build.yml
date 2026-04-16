@@ -109,6 +109,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ inputs.neovex_version || github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 permissions:
   contents: read
 
@@ -228,7 +231,7 @@ jobs:
 
       - name: Restore container image cache
         id: image-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/image-cache
           key: base-image-arm64-${{ hashFiles('images/Containerfile', 'images/build-common.sh') }}
