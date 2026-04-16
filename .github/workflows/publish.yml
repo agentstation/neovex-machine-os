@@ -4,6 +4,8 @@ run-name: >-
     format(' ({0})', inputs.release_tag != '' && inputs.release_tag || inputs.neovex_version)
   }}${{
     format(' from {0}#{1}', inputs.source_repository, inputs.source_run_id)
+  }}${{
+    format(' (attempt {0})', inputs.source_run_attempt != '' && inputs.source_run_attempt || '1')
   }}
 
 on:
@@ -16,6 +18,11 @@ on:
       source_run_id:
         description: "Workflow run ID in the source repository that uploaded the staged machine-os bundle"
         required: true
+        type: string
+      source_run_attempt:
+        description: "Workflow run attempt in the source repository, used for rerun-safe observability"
+        required: false
+        default: ""
         type: string
       neovex_version:
         description: "Neovex release tag recorded in the machine-os release notes"
