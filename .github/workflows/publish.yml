@@ -51,6 +51,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ inputs.release_tag || inputs.neovex_version || github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 permissions:
   contents: read
 
