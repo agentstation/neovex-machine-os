@@ -327,7 +327,7 @@ jobs:
           github.event_name == 'workflow_call'
           && (steps.release-policy.outputs.publish == 'true'
           || steps.release-metadata.outputs.create_release == 'true')
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ inputs.release_app_id }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
